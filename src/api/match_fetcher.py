@@ -7,26 +7,15 @@ class MatchFetcher:
 
     def get_puuids_from_names(self, summoner_names):
         """
-        RESOLVES a list of summoner names (Name#Tag) to PUUIDs.
+        Resolves a list of summoner names (Name#Tag) to PUUIDs.
         """
         puuids = {}
         for name in summoner_names:
-            # Check for Name#Tag format
-            if '#' in name:
-                game_name, tag_line = name.split('#')
-                try:
-                    # Account V1
-                    account = self.client.watcher.account.by_riot_id(self.client._get_routing_value(self.client.region), game_name, tag_line)
-                    puuids[name] = account['puuid']
-                except Exception as e:
-                    print(f"Error resolving {name}: {e}")
-            else:
-                # Fallback to by_name (might be deprecated/flakey without tag)
-                try:
-                    summoner = self.client.watcher.summoner.by_name(self.client.region, name)
-                    puuids[name] = summoner['puuid']
-                except Exception as e:
-                    print(f"Error resolving {name}: {e}")
+            try:
+                summoner = self.client.get_summoner_by_name(name)
+                puuids[name] = summoner['puuid']
+            except Exception as e:
+                print(f"Error resolving {name}: {e}")
         return puuids
 
     def find_games_with_team(self, puuids, count=20, queue=None):

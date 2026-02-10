@@ -1,5 +1,5 @@
 import os
-from riotwatcher import LolWatcher, ApiError
+from riotwatcher import LolWatcher, RiotWatcher, ApiError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,26 +11,23 @@ class RiotClient:
             raise ValueError("Riot API Key is required. Set it in .env or pass it to the constructor.")
         
         self.watcher = LolWatcher(self.api_key)
+        self.riot_watcher = RiotWatcher(self.api_key)
         self.region = region
 
     def get_summoner_by_name(self, summoner_name):
         """
-        Fetches summoner details by summoner name.
+        Fetches summoner details by summoner name or Riot ID (Name#Tag).
         """
         try:
-            # Riot API now uses name + tag, but for simplicity we'll assume the old way 
-            # or expect name#tag format if supported by watcher, 
-            # actually RiotWatcher might still use the old endpoint for some regions or we need to use AccountV1
-            # Let's use AccountV1 to get PUUID if possible, or SummonerV4 if name is simple.
-            # Given the recent changes, it's safer to use Account API for Riot ID (Name + Tag)
-            
             if '#' in summoner_name:
                 game_name, tag_line = summoner_name.split('#')
-                account = self.watcher.account.by_riot_id(self.region, game_name, tag_line)
-                # Then get summoner by PUUID to get summoner ID if needed, but PUUID is best for match history
+                # Account API requires regional routing (americas, europe, asia)
+                routing = self._get_routing_value(self.region)
+                account = self.riot_watcher.account.by_riot_id(routing, game_name, tag_line)
+                # Summoner API uses platform routing (na1, euw1, etc.)
                 return self.watcher.summoner.by_puuid(self.region, account['puuid'])
             else:
-                # Fallback to old behavior if no tag provided (might fail in some regions)
+                # Fallback to old behavior if no tag provided (Summoner V4)
                 return self.watcher.summoner.by_name(self.region, summoner_name)
         except ApiError as err:
             if err.response.status_code == 429:
@@ -67,7 +64,7 @@ class RiotClient:
         """
         try:
             routing = self._get_routing_value(self.region)
-            return self.watcher.match.timeline_by_match_id(routing, match_id)
+            return self.watcher.match.timeline_by_match(routing, match_id)
         except ApiError as err:
             raise
 
