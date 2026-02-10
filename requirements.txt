@@ -1,0 +1,5 @@
+riotwatcher
+pandas
+streamlit
+plotly
+python-dotenv
