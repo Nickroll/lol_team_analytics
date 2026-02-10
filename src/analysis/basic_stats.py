@@ -12,24 +12,57 @@ def get_team_stats(match_data, team_puuids):
     """
     participants = match_data['info']['participants']
     
+    # Calculate Team Totals for shares
+    team_total_kills = sum(p['kills'] for p in participants if p['puuid'] in team_puuids)
+    team_total_damage = sum(p['totalDamageDealtToChampions'] for p in participants if p['puuid'] in team_puuids)
+    team_total_gold = sum(p['goldEarned'] for p in participants if p['puuid'] in team_puuids)
+
+    game_duration_seconds = match_data['info']['gameDuration']
+    game_duration_minutes = game_duration_seconds / 60.0
+
     # Filter for our team
     team_stats = []
     for p in participants:
         if p['puuid'] in team_puuids:
+            # Basic Stats
+            kills = p['kills']
+            deaths = p['deaths']
+            assists = p['assists']
+            damage = p['totalDamageDealtToChampions']
+            gold = p['goldEarned']
+            cs = p['totalMinionsKilled'] + p['neutralMinionsKilled']
+            vision = p['visionScore']
+            
+            # Handle Riot ID vs Summoner Name
+            name = p.get('riotIdGameName')
+            if not name:
+                 name = p.get('summonerName')
+            
+            # Append Tag Line if available and using Riot ID
+            if p.get('riotIdGameName') and p.get('riotIdTagLine'):
+                name = f"{name}#{p.get('riotIdTagLine')}"
+
             stats = {
-                'summonerName': p['summonerName'],
+                'summonerName': name,
                 'championName': p['championName'],
+                'role': p.get('teamPosition', 'UNKNOWN'),
                 'win': p['win'],
-                'kills': p['kills'],
-                'deaths': p['deaths'],
-                'assists': p['assists'],
-                'kda': calculate_kda(p),
-                'totalMinionsKilled': p['totalMinionsKilled'],
-                'neutralMinionsKilled': p['neutralMinionsKilled'], # Jungle CS
-                'goldEarned': p['goldEarned'],
-                'visionScore': p['visionScore'],
-                'damageDealtToChampions': p['totalDamageDealtToChampions'],
-                'role': p.get('teamPosition', 'UNKNOWN')
+                'kda_ratio': calculate_kda(p),
+                'kills': kills,
+                'deaths': deaths,
+                'assists': assists,
+                'cs': cs,
+                'gold': gold,
+                'damage': damage,
+                'vision': vision,
+                # Advanced Stats
+                'dpm': damage / game_duration_minutes if game_duration_minutes > 0 else 0,
+                'dpg': damage / gold if gold > 0 else 0,
+                'cspm': cs / game_duration_minutes if game_duration_minutes > 0 else 0,
+                'vspm': vision / game_duration_minutes if game_duration_minutes > 0 else 0,
+                'kp_%': ((kills + assists) / team_total_kills * 100) if team_total_kills > 0 else 0,
+                'dmg_%': (damage / team_total_damage * 100) if team_total_damage > 0 else 0,
+                'gold_%': (gold / team_total_gold * 100) if team_total_gold > 0 else 0,
             }
             team_stats.append(stats)
             

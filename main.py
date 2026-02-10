@@ -83,8 +83,34 @@ if st.sidebar.button("Analyze Games"):
                         
                         with st.expander(f"{mode} - {match_id}"):
                             # Basic Stats
+                            # Basic Stats
                             stats_df = get_team_stats(match, puuids.values())
-                            st.dataframe(stats_df)
+                            
+                            st.subheader("Team Overview")
+                            
+                            # KPI Comparisons
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.caption("Damage Per Minute")
+                                fig_dpm = px.bar(stats_df, x='summonerName', y='dpm', color='role', title="DPM by Player", barmode='group')
+                                st.plotly_chart(fig_dpm, use_container_width=True)
+                                
+                                st.caption("Kill Participation %")
+                                fig_kp = px.bar(stats_df, x='summonerName', y='kp_%', color='role', title="Kill Participation %", barmode='group')
+                                st.plotly_chart(fig_kp, use_container_width=True)
+
+                            with col2:
+                                st.caption("Gold Share %")
+                                fig_gold = px.pie(stats_df, values='gold', names='summonerName', title="Gold Distribution")
+                                st.plotly_chart(fig_gold, use_container_width=True)
+
+                                st.caption("Vision Score Per Minute")
+                                fig_vspm = px.bar(stats_df, x='summonerName', y='vspm', color='role', title="Vision Score / Min", barmode='group')
+                                st.plotly_chart(fig_vspm, use_container_width=True)
+                            
+                            with st.expander("View Full Stats Table"):
+                                st.dataframe(stats_df)
                             
                             # Jungle Pathing Visualization
                             st.subheader("Jungle Pathing")
@@ -94,43 +120,85 @@ if st.sidebar.button("Analyze Games"):
                             if not jungler_row.empty:
                                 jungler_puuid = None
                                 jungler_name = jungler_row.iloc[0]['summonerName']
+                                jungler_champ = jungler_row.iloc[0]['championName']
+                                
                                 for name, pid in puuids.items():
                                     # This is a bit fuzzy matching if name format differs, 
                                     # but stats_df has summonerName from match data
-                                    if name.split('#')[0].lower() == jungler_name.lower(): 
+                                    if name.split('#')[0].lower() == jungler_name.split('#')[0].lower(): 
                                         jungler_puuid = pid
                                         break
+                                
                                 # Fallback: find puuid by iterating participants again or just store it in stats_df
-                                # Let's update basic_stats to include PUUID to make this easier next time.
-                                # For now, let's just find the generic participant matching the name
-                                target_p = next((p for p in match['info']['participants'] if p['summonerName'] == jungler_name), None)
-                                if target_p:
-                                    jungler_puuid = target_p['puuid']
+                                if not jungler_puuid:
+                                     target_p = next((p for p in match['info']['participants'] if p['championName'] == jungler_champ), None)
+                                     if target_p:
+                                         jungler_puuid = target_p['puuid']
                                 
                                 if jungler_puuid:
                                     try:
-                                        timeline = client.get_match_timeline(match_id)
-                                        path_df = extract_jungle_path(timeline, jungler_puuid)
+                                        # DEBUG: Show who we are tracking
+                                        st.caption(f"Debug: Tracking Jungler: **{jungler_name}** ({jungler_champ})") 
+                                        st.caption(f"PUUID: `{jungler_puuid}`")
                                         
-                                        if not path_df.empty:
-                                            fig = px.scatter(
-                                                path_df, 
-                                                x='x', 
-                                                y='y', 
-                                                color='type',
-                                                hover_data=['timestamp'],
-                                                title=f"Jungle Path - {jungler_name}",
-                                                width=600,
-                                                height=600
-                                            )
-                                            # Set limits to typical map size (0 to 15000 approx)
-                                            fig.update_xaxes(range=[0, 15000])
-                                            fig.update_yaxes(range=[0, 15000])
-                                            # Invert Y if needed? No, Summoner's Rift 0,0 is bottom left.
+                                        timeline = fetcher.get_match_timeline(match_id)
+                                        if timeline:
+                                            path_df = extract_jungle_path(timeline, jungler_puuid)
                                             
-                                            st.plotly_chart(fig)
+                                            if not path_df.empty:
+                                                # Define colors/shapes for event types
+                                                color_map = {
+                                                    'POSITION': 'blue',
+                                                    'ELITE_KILL': 'red',
+                                                    'KILL_PARTICIPATION': 'orange',
+                                                    'WARD_PLACED': 'green',
+                                                    'SKILL_LEVEL_UP': 'purple',
+                                                    'ITEM_PURCHASED': 'gold'
+                                                }
+                                                
+                                                # Custom hover data
+                                                fig = px.scatter(
+                                                    path_df, 
+                                                    x='x', 
+                                                    y='y', 
+                                                    color='type',
+                                                    symbol='type', # Use different shapes
+                                                    hover_data=['timestamp', 'info'],
+                                                    title=f"Jungle Path - {jungler_name}",
+                                                    color_discrete_map=color_map,
+                                                    width=600,
+                                                    height=600,
+                                                )
+                                                # Set limits to typical map size (0 to 15000 approx)
+                                                # Summoner's Rift is roughly 15000x15000 units.
+                                                # We need to add the map image as a layout image.
+                                                # Image URL: https://ddragon.leagueoflegends.com/cdn/16.3.1/img/map/map11.png
+                                                
+                                                fig.update_layout(
+                                                    images=[dict(
+                                                        source="https://ddragon.leagueoflegends.com/cdn/16.3.1/img/map/map11.png",
+                                                        xref="x",
+                                                        yref="y",
+                                                        x=0,
+                                                        y=15000,
+                                                        sizex=15000,
+                                                        sizey=15000,
+                                                        sizing="stretch",
+                                                        opacity=0.8,
+                                                        layer="below"
+                                                    )],
+                                                    xaxis=dict(range=[0, 15000], showgrid=False, zeroline=False, visible=False),
+                                                    yaxis=dict(range=[0, 15000], showgrid=False, zeroline=False, visible=False),
+                                                    width=600,
+                                                    height=600,
+                                                    margin=dict(l=0, r=0, t=30, b=0)
+                                                )
+                                                
+                                                st.plotly_chart(fig)
+                                            else:
+                                                st.info("No pathing data available.")
                                         else:
-                                            st.info("No pathing data available.")
+                                            st.warning("Could not fetch timeline.")
                                     except ApiError as e:
                                         st.warning(f"Could not fetch timeline: {e}")
                             else:

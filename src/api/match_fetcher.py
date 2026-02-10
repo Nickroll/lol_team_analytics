@@ -1,9 +1,11 @@
 from .riot_client import RiotClient
+from .match_cache import MatchCache
 import time
 
 class MatchFetcher:
     def __init__(self, riot_client: RiotClient):
         self.client = riot_client
+        self.cache = MatchCache()
 
     def get_puuids_from_names(self, summoner_names):
         """
@@ -38,7 +40,14 @@ class MatchFetcher:
 
         for match_id in match_ids:
             try:
-                details = self.client.get_match_details(match_id)
+                # Check Cache
+                details = self.cache.get_match(match_id)
+                if not details:
+                    # Fetch from API
+                    details = self.client.get_match_details(match_id)
+                    # Save to Cache
+                    self.cache.save_match(match_id, details)
+                
                 participants = details['metadata']['participants']
                 
                 # Check if all target PUUIDs are in this match
@@ -48,4 +57,19 @@ class MatchFetcher:
             except Exception as e:
                 print(f"Error fetching details for {match_id}: {e}")
                 
+                
         return team_matches
+
+    def get_match_timeline(self, match_id):
+        """
+        Fetches match timeline, checking cache first.
+        """
+        timeline = self.cache.get_timeline(match_id)
+        if not timeline:
+            try:
+                timeline = self.client.get_match_timeline(match_id)
+                self.cache.save_timeline(match_id, timeline)
+            except Exception as e:
+                print(f"Error fetching timeline for {match_id}: {e}")
+                return None
+        return timeline
