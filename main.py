@@ -5,6 +5,7 @@ from src.api.riot_client import RiotClient, ApiError
 from src.api.match_fetcher import MatchFetcher
 from src.analysis.basic_stats import get_team_stats
 from src.analysis.jungle_pathing import extract_jungle_path
+from src.config import ConfigManager
 import os
 
 # Page Config
@@ -12,15 +13,37 @@ st.set_page_config(page_title="LoL Team Analytics", layout="wide")
 
 st.title("League of Legends Team Analytics")
 
+# Load Config
+config_manager = ConfigManager()
+config = config_manager.load_config()
+
 # Sidebar for specific player inputs
 st.sidebar.header("Team Configuration")
-region = st.sidebar.selectbox("Region", ['na1', 'euw1', 'kr', 'br1']) # Add more as needed
-api_key = st.sidebar.text_input("Riot API Key", type="password", help="Get one from developer.riotgames.com")
+regions = ['na1', 'euw1', 'kr', 'br1']
+default_region = config.get('region', 'na1')
+region_index = regions.index(default_region) if default_region in regions else 0
+region = st.sidebar.selectbox("Region", regions, index=region_index) 
+
+default_api_key = config.get('api_key', '')
+api_key = st.sidebar.text_input("Riot API Key", value=default_api_key, type="password", help="Get one from developer.riotgames.com")
 
 st.sidebar.subheader("Summoner Names (Name#Tag)")
 player_inputs = []
+default_players = config.get('players', [''] * 5)
 for i in range(5):
-    player_inputs.append(st.sidebar.text_input(f"Player {i+1}", key=f"p{i}"))
+    default_val = default_players[i] if i < len(default_players) else ''
+    player_inputs.append(st.sidebar.text_input(f"Player {i+1}", value=default_val, key=f"p{i}"))
+
+if st.sidebar.button("Save Configuration"):
+    config_data = {
+        'api_key': api_key,
+        'region': region,
+        'players': player_inputs
+    }
+    if config_manager.save_config(config_data):
+        st.sidebar.success("Configuration saved!")
+    else:
+        st.sidebar.error("Failed to save configuration.")
 
 if st.sidebar.button("Analyze Games"):
     if not api_key:
