@@ -5,28 +5,33 @@ echo   LoL Team Analytics - First Time Setup
 echo ============================================
 echo.
 
-:: Check for Python
+:: Check for Python — try 'python' first, then 'py' (Windows launcher)
+set PYTHON_CMD=python
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not in PATH.
-    echo.
-    echo Please install Python 3.9+ from:
-    echo   https://www.python.org/downloads/
-    echo.
-    echo IMPORTANT: Check "Add Python to PATH" during installation!
-    echo.
-    pause
-    exit /b 1
+    py --version >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [ERROR] Python is not installed or not in PATH.
+        echo.
+        echo Please install Python 3.9+ from:
+        echo   https://www.python.org/downloads/
+        echo.
+        echo IMPORTANT: Check "Add Python to PATH" during installation!
+        echo.
+        pause
+        exit /b 1
+    )
+    set PYTHON_CMD=py
 )
 
 echo [OK] Python found:
-python --version
+%PYTHON_CMD% --version
 echo.
 
 :: Create virtual environment
 if not exist ".venv" (
     echo [*] Creating virtual environment...
-    python -m venv .venv
+    %PYTHON_CMD% -m venv .venv
     if %errorlevel% neq 0 (
         echo [ERROR] Failed to create virtual environment.
         pause
