@@ -3,189 +3,251 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def generate_report_image(stats_df, adv_df, summary_lines, match_id):
+def generate_report_image(stats_df, adv_df, summary_lines, match_id,
+                          momentum_data=None, conversion_data=None):
     """
-    Generates a composite match report image as PNG.
-    Includes basic stats, advanced stats, charts, and text summary.
+    Generates a clean match report image as PNG.
+    3-row layout: scoreboard, gold timeline chart, key callouts.
     Returns the file path.
     """
     export_dir = 'data/exports'
     os.makedirs(export_dir, exist_ok=True)
     filepath = os.path.join(export_dir, f"report_{match_id}.png")
 
-    # Catppuccin palette
-    colors = ['#89b4fa', '#cba6f7', '#a6e3a1', '#f9e2af', '#f38ba8']
+    # Catppuccin Mocha palette
     bg_base = '#1e1e2e'
     bg_surface = '#313244'
     bg_mantle = '#181825'
     text_main = '#cdd6f4'
     text_sub = '#bac2de'
+    cp_blue = '#89b4fa'
+    cp_red = '#f38ba8'
+    cp_green = '#a6e3a1'
 
-    has_adv = adv_df is not None and not adv_df.empty
+    has_momentum = momentum_data is not None and 'gold_timeline' in momentum_data
 
-    fig = make_subplots(
-        rows=5, cols=2,
-        specs=[
-            [{"colspan": 2, "type": "table"}, None],          # Row 1: Basic stats table
-            [{"type": "bar"}, {"type": "bar"}],                # Row 2: DPM + KP charts
-            [{"colspan": 2, "type": "table"}, None],          # Row 3: Advanced stats table
-            [{"type": "bar"}, {"type": "bar"}],                # Row 4: Harass + Greed charts
-            [{"colspan": 2, "type": "table"}, None],          # Row 5: Summary text
-        ],
-        subplot_titles=[
-            "Team Stats",
-            "Damage Per Minute", "Kill Participation %",
-            "Advanced Stats",
-            "Harass Score", "Greed Index",
-            "Match Summary",
-        ],
-        vertical_spacing=0.04,
-        row_heights=[0.20, 0.18, 0.20, 0.18, 0.24],
-    )
+    # Build title string: "Victory · Clean Win · 32 min"
+    title_parts = []
+    is_win = any("Victory" in line for line in summary_lines) if summary_lines else False
+    title_parts.append("🏆 Victory" if is_win else "💀 Defeat")
+    if has_momentum:
+        title_parts.append(momentum_data['classification'])
+    if summary_lines:
+        for line in summary_lines:
+            if "minutes" in line.lower():
+                import re
+                m = re.search(r'(\d+)\s*minutes', line)
+                if m:
+                    title_parts.append(f"{m.group(1)} min")
+                break
+    title_text = " · ".join(title_parts)
+
+    # Determine layout based on whether we have momentum data
+    if has_momentum:
+        fig = make_subplots(
+            rows=3, cols=1,
+            specs=[[{"type": "table"}], [{"type": "scatter"}], [{"type": "table"}]],
+            vertical_spacing=0.06,
+            row_heights=[0.35, 0.40, 0.25],
+        )
+    else:
+        fig = make_subplots(
+            rows=2, cols=1,
+            specs=[[{"type": "table"}], [{"type": "table"}]],
+            vertical_spacing=0.08,
+            row_heights=[0.60, 0.40],
+        )
 
     # ═══════════════════════════════════════════
-    # Row 1: Basic Stats Table
+    # Row 1: Compact Scoreboard
     # ═══════════════════════════════════════════
     if not stats_df.empty:
-        display_cols = ['summonerName', 'championName', 'role', 'kills', 'deaths', 'assists',
-                        'cs', 'gold', 'damage', 'dpm', 'vspm', 'kp_%', 'dmg_%', 'gold_%']
+        display_cols = ['championName', 'summonerName', 'kills', 'deaths', 'assists', 'dpm', 'cspm', 'kp_%']
         available_cols = [c for c in display_cols if c in stats_df.columns]
         header_labels = {
-            'summonerName': 'Player', 'championName': 'Champ', 'role': 'Role',
+            'championName': 'Champ', 'summonerName': 'Player',
             'kills': 'K', 'deaths': 'D', 'assists': 'A',
-            'cs': 'CS', 'gold': 'Gold', 'damage': 'Dmg',
-            'dpm': 'DPM', 'vspm': 'VS/M',
-            'kp_%': 'KP%', 'dmg_%': 'Dmg%', 'gold_%': 'Gold%',
+            'dpm': 'DPM', 'cspm': 'CS/M', 'kp_%': 'KP%',
         }
         headers = [header_labels.get(c, c) for c in available_cols]
         values = [stats_df[c].tolist() for c in available_cols]
 
-        # Format numeric columns
         for i, c in enumerate(available_cols):
-            if c in ('dpm', 'vspm', 'kp_%', 'dmg_%', 'gold_%'):
+            if c in ('dpm', 'cspm', 'kp_%'):
                 values[i] = [f"{v:.1f}" if isinstance(v, (int, float)) else v for v in values[i]]
-            elif c in ('gold', 'damage'):
-                values[i] = [f"{v:,.0f}" if isinstance(v, (int, float)) else v for v in values[i]]
+
+        # Color deaths red if >= 5
+        death_idx = available_cols.index('deaths') if 'deaths' in available_cols else None
+        cell_font_colors = []
+        for i, c in enumerate(available_cols):
+            if c == 'deaths':
+                cell_font_colors.append([cp_red if v >= 5 else text_main for v in stats_df[c]])
+            else:
+                cell_font_colors.append([text_main] * len(stats_df))
 
         fig.add_trace(
             go.Table(
-                header=dict(values=headers, fill_color=bg_base, font=dict(color=text_main, size=11), align='center'),
-                cells=dict(values=values, fill_color=bg_surface, font=dict(color=text_main, size=10), align='center'),
+                header=dict(
+                    values=headers, fill_color=bg_base,
+                    font=dict(color=text_main, size=12), align='center',
+                    line_color=bg_mantle,
+                ),
+                cells=dict(
+                    values=values, fill_color=bg_surface,
+                    font=dict(color=cell_font_colors, size=11), align='center',
+                    line_color=bg_mantle, height=26,
+                ),
             ),
             row=1, col=1,
         )
 
     # ═══════════════════════════════════════════
-    # Row 2: DPM + KP Bar Charts
+    # Row 2: Gold Timeline Chart (if momentum data available)
     # ═══════════════════════════════════════════
-    if not stats_df.empty and 'dpm' in stats_df.columns:
+    if has_momentum:
+        gold_tl = momentum_data['gold_timeline']
+        minutes = [f['minute'] for f in gold_tl]
+        diffs = [f['gold_diff'] for f in gold_tl]
+        pos_diffs = [max(0, d) for d in diffs]
+        neg_diffs = [min(0, d) for d in diffs]
+
         fig.add_trace(
-            go.Bar(x=stats_df['summonerName'], y=stats_df['dpm'],
-                   marker_color=colors[:len(stats_df)], showlegend=False),
+            go.Scatter(
+                x=minutes, y=pos_diffs, fill='tozeroy',
+                fillcolor='rgba(137, 180, 250, 0.3)',
+                line=dict(color=cp_blue, width=2),
+                name='Our Lead', showlegend=False,
+            ),
+            row=2, col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=minutes, y=neg_diffs, fill='tozeroy',
+                fillcolor='rgba(243, 139, 168, 0.3)',
+                line=dict(color=cp_red, width=2),
+                name='Enemy Lead', showlegend=False,
+            ),
             row=2, col=1,
         )
 
-    if not stats_df.empty and 'kp_%' in stats_df.columns:
-        fig.add_trace(
-            go.Bar(x=stats_df['summonerName'], y=stats_df['kp_%'],
-                   marker_color=colors[:len(stats_df)], showlegend=False),
-            row=2, col=2,
-        )
+        # Threshold lines
+        fig.add_hline(y=3000, line_dash="dash", line_color="rgba(166, 227, 161, 0.4)",
+                      row=2, col=1)
+        fig.add_hline(y=-3000, line_dash="dash", line_color="rgba(243, 139, 168, 0.4)",
+                      row=2, col=1)
+        fig.add_hline(y=0, line_color="white", line_width=1, row=2, col=1)
+
+        # Peak annotations
+        if momentum_data['peak_lead'] > 0:
+            fig.add_annotation(
+                x=momentum_data['peak_lead_minute'], y=momentum_data['peak_lead'],
+                text=f"+{momentum_data['peak_lead']:,}g",
+                showarrow=True, arrowcolor=cp_green,
+                font=dict(color=cp_green, size=10),
+                row=2, col=1,
+            )
+        if momentum_data['peak_deficit'] < 0:
+            fig.add_annotation(
+                x=momentum_data['peak_deficit_minute'], y=momentum_data['peak_deficit'],
+                text=f"{momentum_data['peak_deficit']:,}g",
+                showarrow=True, arrowcolor=cp_red,
+                font=dict(color=cp_red, size=10),
+                row=2, col=1,
+            )
 
     # ═══════════════════════════════════════════
-    # Row 3: Advanced Stats Table
+    # Row 3 (or 2 if no momentum): Key Callouts
     # ═══════════════════════════════════════════
-    if has_adv:
-        adv_cols = ['summonerName', 'harass_score', 'greed_index', 'jungle_prox',
-                    'gank_deaths', 'early_wards', 'spotted_deaths', 'unspotted_deaths']
-        avail_adv = [c for c in adv_cols if c in adv_df.columns]
-        adv_headers_map = {
-            'summonerName': 'Player', 'harass_score': 'Harass', 'greed_index': 'Greed',
-            'jungle_prox': 'JG Prox%', 'gank_deaths': 'Gank Deaths',
-            'early_wards': 'Wards<14m', 'spotted_deaths': 'Spotted', 'unspotted_deaths': 'Unspotted',
-        }
-        adv_headers = [adv_headers_map.get(c, c) for c in avail_adv]
-        adv_values = [adv_df[c].tolist() for c in avail_adv]
+    callout_row = 3 if has_momentum else 2
 
-        # Format
-        for i, c in enumerate(avail_adv):
-            if c in ('harass_score', 'jungle_prox'):
-                adv_values[i] = [f"{v:.1f}" if isinstance(v, (int, float)) else v for v in adv_values[i]]
+    callout_headers = []
+    callout_values = []
 
-        fig.add_trace(
-            go.Table(
-                header=dict(values=adv_headers, fill_color=bg_base, font=dict(color=text_main, size=11), align='center'),
-                cells=dict(values=adv_values, fill_color=bg_surface, font=dict(color=text_main, size=10), align='center'),
-            ),
-            row=3, col=1,
-        )
-    else:
-        fig.add_trace(
-            go.Table(
-                header=dict(values=['Advanced Stats'], fill_color=bg_base, font=dict(color=text_sub, size=11)),
-                cells=dict(values=[['No advanced data available']], fill_color=bg_surface, font=dict(color=text_sub, size=10)),
-            ),
-            row=3, col=1,
-        )
-
-    # ═══════════════════════════════════════════
-    # Row 4: Harass Score + Greed Index Charts
-    # ═══════════════════════════════════════════
-    if has_adv and 'harass_score' in adv_df.columns:
-        harass_colors = ['#a6e3a1' if v >= 1.0 else '#f38ba8' for v in adv_df['harass_score']]
-        fig.add_trace(
-            go.Bar(x=adv_df['summonerName'], y=adv_df['harass_score'],
-                   marker_color=harass_colors, showlegend=False),
-            row=4, col=1,
-        )
-
-    if has_adv and 'greed_index' in adv_df.columns:
-        greed_colors = ['#f38ba8' if v >= 2 else '#f9e2af' if v >= 1 else '#a6e3a1' for v in adv_df['greed_index']]
-        fig.add_trace(
-            go.Bar(x=adv_df['summonerName'], y=adv_df['greed_index'],
-                   marker_color=greed_colors, showlegend=False),
-            row=4, col=2,
-        )
-
-    # ═══════════════════════════════════════════
-    # Row 5: Match Summary Text
-    # ═══════════════════════════════════════════
+    # MVP
     if summary_lines:
-        clean_lines = [line.replace('**', '') for line in summary_lines]
+        for line in summary_lines:
+            if "MVP" in line:
+                clean = line.replace('**', '').replace('⭐ ', '')
+                callout_headers.append('⭐ MVP')
+                callout_values.append(clean.replace('MVP: ', ''))
+                break
+
+    # Objectives
+    if summary_lines:
+        for line in summary_lines:
+            if "Objectives" in line:
+                clean = line.replace('**', '').replace('🏰 ', '')
+                callout_headers.append('🏰 Objectives')
+                callout_values.append(clean.replace('Objectives Secured: ', '').replace('Objectives: ', ''))
+                break
+
+    # Gold @ 15
+    if summary_lines:
+        for line in summary_lines:
+            if "Gold @" in line or "Gold@" in line:
+                clean = line.replace('**', '').replace('📈 ', '').replace('📉 ', '')
+                callout_headers.append('💰 Gold@15')
+                callout_values.append(clean.replace('Gold @ 15m: ', ''))
+                break
+
+    # Fight conversion
+    if conversion_data is not None:
+        callout_headers.append('⚔️ Fight Conversion')
+        callout_values.append(
+            f"Ours: {conversion_data['team_conversion_rate']}% · Theirs: {conversion_data['enemy_conversion_rate']}%"
+        )
+
+    if callout_headers:
         fig.add_trace(
             go.Table(
-                header=dict(values=['Match Summary'], fill_color=bg_base, font=dict(color=text_main, size=13), align='left'),
-                cells=dict(values=[clean_lines], fill_color=bg_mantle, font=dict(color=text_sub, size=11), align='left', height=22),
+                header=dict(
+                    values=callout_headers, fill_color=bg_base,
+                    font=dict(color=text_main, size=11), align='center',
+                    line_color=bg_mantle,
+                ),
+                cells=dict(
+                    values=[[v] for v in callout_values], fill_color=bg_mantle,
+                    font=dict(color=text_sub, size=11), align='center',
+                    line_color=bg_mantle, height=28,
+                ),
             ),
-            row=5, col=1,
+            row=callout_row, col=1,
         )
     else:
         fig.add_trace(
             go.Table(
-                header=dict(values=['Match Summary'], fill_color=bg_base, font=dict(color=text_sub, size=13)),
-                cells=dict(values=[['No summary available']], fill_color=bg_mantle, font=dict(color=text_sub, size=11)),
+                header=dict(values=['Summary'], fill_color=bg_base, font=dict(color=text_sub, size=11)),
+                cells=dict(values=[['No summary data']], fill_color=bg_mantle, font=dict(color=text_sub, size=11)),
             ),
-            row=5, col=1,
+            row=callout_row, col=1,
         )
 
+    # ═══════════════════════════════════════════
+    # Layout
+    # ═══════════════════════════════════════════
+    height = 800 if has_momentum else 500
     fig.update_layout(
-        title=dict(text=f"Match Report — {match_id}", font=dict(color=text_main, size=18)),
-        width=1400,
-        height=1400,
+        title=dict(text=title_text, font=dict(color=text_main, size=16)),
+        width=1200,
+        height=height,
         paper_bgcolor=bg_base,
         plot_bgcolor=bg_base,
         font=dict(color=text_main),
-        margin=dict(t=60, b=20, l=30, r=30),
+        margin=dict(t=50, b=15, l=25, r=25),
     )
 
-    # Style chart axes
-    for i in range(1, 9):
-        axis_x = f'xaxis{i}' if i > 1 else 'xaxis'
-        axis_y = f'yaxis{i}' if i > 1 else 'yaxis'
-        if axis_x in fig.layout:
-            fig.layout[axis_x].update(tickfont=dict(color=text_sub, size=9))
-        if axis_y in fig.layout:
-            fig.layout[axis_y].update(tickfont=dict(color=text_sub, size=9), gridcolor='#45475a')
+    # Style chart axes (for gold timeline)
+    if has_momentum:
+        fig.update_xaxes(
+            title_text="Minutes", title_font=dict(color=text_sub, size=10),
+            tickfont=dict(color=text_sub, size=9), gridcolor='#45475a',
+            row=2, col=1,
+        )
+        fig.update_yaxes(
+            title_text="Gold Diff", title_font=dict(color=text_sub, size=10),
+            tickfont=dict(color=text_sub, size=9), gridcolor='#45475a',
+            row=2, col=1,
+        )
 
     try:
         fig.write_image(filepath, engine='kaleido')

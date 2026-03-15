@@ -544,10 +544,12 @@ if st.session_state.team_matches and st.session_state.puuids:
                             else:
                                 st.info("No teamfights detected (requires 3+ kills within 15s & 4000 units).")
 
+                        # --- Compute momentum & conversion data (shared by tab + export) ---
+                        momentum_data = analyze_game_momentum(timeline, match, found_team_pids)
+                        conversion_data = analyze_fight_conversion(timeline, match, found_team_pids)
+
                         # --- Tab 7: Momentum ---
                         with tab_momentum:
-                            momentum_data = analyze_game_momentum(timeline, match, found_team_pids)
-
                             # Classification badge
                             classification = momentum_data['classification']
                             class_colors = {
@@ -604,8 +606,6 @@ if st.session_state.team_matches and st.session_state.puuids:
                             st.markdown("---")
                             st.subheader("Post-Fight Objective Conversion")
 
-                            conversion_data = analyze_fight_conversion(timeline, match, found_team_pids)
-
                             if conversion_data['fights']:
                                 conv_df = pd.DataFrame(conversion_data['fights'])
                                 conv_df.columns = ['Fight #', 'Time', 'Outcome', 'Score', 'Converted?', 'Objectives']
@@ -639,7 +639,8 @@ if st.session_state.team_matches and st.session_state.puuids:
                             with col_exp:
                                 if st.button("📸 Export Report as Image", key=f"export_{match_id}"):
                                     with st.spinner("Generating report image..."):
-                                        filepath = generate_report_image(stats_df, adv_df, summary_lines, match_id)
+                                        filepath = generate_report_image(stats_df, adv_df, summary_lines, match_id,
+                                                                         momentum_data=momentum_data, conversion_data=conversion_data)
                                     if filepath and os.path.exists(filepath):
                                         with open(filepath, 'rb') as f:
                                             st.download_button(
@@ -656,7 +657,8 @@ if st.session_state.team_matches and st.session_state.puuids:
                                     if st.button("📤 Share to Discord", key=f"discord_{match_id}"):
                                         with st.spinner("Sending to Discord..."):
                                             # Generate report image for attachment
-                                            img_path = generate_report_image(stats_df, adv_df, summary_lines, match_id)
+                                            img_path = generate_report_image(stats_df, adv_df, summary_lines, match_id,
+                                                                             momentum_data=momentum_data, conversion_data=conversion_data)
                                             success, msg = send_to_discord(
                                                 discord_webhook, summary_lines, stats_df, match_id,
                                                 adv_df=adv_df, report_image_path=img_path
