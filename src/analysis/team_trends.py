@@ -2,7 +2,9 @@
 import pandas as pd
 import numpy as np
 from src.analysis.basic_stats import get_team_stats
-from src.analysis.common import compute_advanced_stats
+from src.analysis.common import compute_advanced_stats, build_puuid_to_pid
+from src.analysis.momentum import analyze_game_momentum
+from src.analysis.fight_conversion import analyze_fight_conversion
 
 
 def calculate_gold_diff_at_15(match_timeline, team_id):
@@ -63,12 +65,32 @@ def analyze_team_trends(matches, team_puuids_list, fetcher):
             if timeline:
                 gold_diff_15 = calculate_gold_diff_at_15(timeline, team_id)
             
+            # Momentum classification and fight conversion
+            game_classification = 'Unknown'
+            fight_conversion_rate = 0
+            enemy_conversion_rate = 0
+
+            if timeline:
+                puuid_to_pid = build_puuid_to_pid(timeline)
+                found_team_pids = [puuid_to_pid[p] for p in team_puuids_list if p in puuid_to_pid]
+
+                if found_team_pids:
+                    momentum = analyze_game_momentum(timeline, match, found_team_pids)
+                    game_classification = momentum['classification']
+
+                    conversion = analyze_fight_conversion(timeline, match, found_team_pids)
+                    fight_conversion_rate = conversion['team_conversion_rate']
+                    enemy_conversion_rate = conversion['enemy_conversion_rate']
+
             trend_data.append({
                 'match_id': match_id,
                 'win': win,
                 'side': side,
                 'gold_diff_15': gold_diff_15,
-                'game_creation': match['info']['gameCreation']
+                'game_creation': match['info']['gameCreation'],
+                'game_classification': game_classification,
+                'fight_conversion_rate': fight_conversion_rate,
+                'enemy_conversion_rate': enemy_conversion_rate,
             })
             
         except Exception as e:

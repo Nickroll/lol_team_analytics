@@ -13,6 +13,8 @@ from src.analysis.objectives import analyze_objective_setup, detect_objective_th
 from src.analysis.game_summary import generate_game_summary
 from src.analysis.teamfights import detect_teamfights, analyze_teamfight
 from src.analysis.report_export import generate_report_image
+from src.analysis.momentum import analyze_game_momentum
+from src.analysis.fight_conversion import analyze_fight_conversion
 from src.discord_integration import send_to_discord
 from src.config import ConfigManager
 import os
@@ -155,6 +157,40 @@ if st.session_state.team_matches and st.session_state.puuids:
                               template='plotly_dark')
             st.plotly_chart(fig_side, use_container_width=True)
             
+            # 3. Game Classification Distribution
+            if 'game_classification' in trend_df.columns:
+                st.subheader("Game Classification Distribution")
+                class_counts = trend_df['game_classification'].value_counts().reset_index()
+                class_counts.columns = ['Classification', 'Count']
+                class_color_map = {
+                    'Comeback Win': '#a6e3a1', 'Clean Win': '#89b4fa',
+                    'Throw Loss': '#f38ba8', 'Clean Loss': '#585b70', 'Close Game': '#f9e2af',
+                    'Unknown': '#7f849c',
+                }
+                fig_class = px.bar(class_counts, x='Classification', y='Count',
+                                   title="Game Classifications",
+                                   color='Classification', color_discrete_map=class_color_map,
+                                   template='plotly_dark')
+                st.plotly_chart(fig_class, use_container_width=True)
+
+            # 4. Fight Conversion Rate Over Games
+            if 'fight_conversion_rate' in trend_df.columns:
+                st.subheader("Fight Conversion Rate Over Time")
+                fig_conv = go.Figure()
+                fig_conv.add_trace(go.Scatter(
+                    x=trend_df['game_creation'], y=trend_df['fight_conversion_rate'],
+                    mode='lines+markers', name='Our Rate',
+                    line=dict(color='#89b4fa'), marker=dict(color='#89b4fa')))
+                fig_conv.add_trace(go.Scatter(
+                    x=trend_df['game_creation'], y=trend_df['enemy_conversion_rate'],
+                    mode='lines+markers', name='Enemy Rate',
+                    line=dict(color='#f38ba8'), marker=dict(color='#f38ba8')))
+                fig_conv.update_layout(
+                    title="Post-Fight Objective Conversion %",
+                    xaxis_title="Date", yaxis_title="Conversion %",
+                    template='plotly_dark')
+                st.plotly_chart(fig_conv, use_container_width=True)
+
         else:
             st.warning("Could not calculate team trends.")
 
@@ -301,7 +337,7 @@ if st.session_state.team_matches and st.session_state.puuids:
             
             with st.expander(f"{mode} - {match_id}"):
                 # Define Tabs
-                tab_overview, tab_laning, tab_vision, tab_jungle, tab_objectives, tab_teamfights = st.tabs(["📊 Overview", "⚔️ Laning", "👁️ Vision", "🌲 Jungle Pathing", "🐲 Objectives", "⚔️ Teamfights"])
+                tab_overview, tab_laning, tab_vision, tab_jungle, tab_objectives, tab_teamfights, tab_momentum = st.tabs(["📊 Overview", "⚔️ Laning", "👁️ Vision", "🌲 Jungle Pathing", "🐲 Objectives", "⚔️ Teamfights", "📈 Momentum"])
                 
                 # --- Tab 1: Overview ---
                 with tab_overview:
@@ -507,6 +543,86 @@ if st.session_state.team_matches and st.session_state.puuids:
                                             st.write(", ".join(tf_data['team_names']))
                             else:
                                 st.info("No teamfights detected (requires 3+ kills within 15s & 4000 units).")
+
+                        # --- Tab 7: Momentum ---
+                        with tab_momentum:
+                            momentum_data = analyze_game_momentum(timeline, match, found_team_pids)
+
+                            # Classification badge
+                            classification = momentum_data['classification']
+                            class_colors = {
+                                'Comeback Win': '🟢', 'Clean Win': '🔵',
+                                'Throw Loss': '🔴', 'Clean Loss': '⚫', 'Close Game': '🟡',
+                            }
+                            badge = class_colors.get(classification, '⚪')
+                            st.metric("Game Classification", f"{badge} {classification}")
+
+                            # Gold timeline chart
+                            import pandas as _pd
+                            gold_df = _pd.DataFrame(momentum_data['gold_timeline'])
+
+                            fig_gold = go.Figure()
+                            # Positive region (our lead)
+                            pos_gold = gold_df['gold_diff'].clip(lower=0)
+                            neg_gold = gold_df['gold_diff'].clip(upper=0)
+
+                            fig_gold.add_trace(go.Scatter(
+                                x=gold_df['minute'], y=pos_gold, fill='tozeroy',
+                                fillcolor='rgba(137, 180, 250, 0.3)', line=dict(color=CP_BLUE, width=2),
+                                name='Our Lead', hovertemplate='%{y:+,}g<extra></extra>'))
+                            fig_gold.add_trace(go.Scatter(
+                                x=gold_df['minute'], y=neg_gold, fill='tozeroy',
+                                fillcolor='rgba(243, 139, 168, 0.3)', line=dict(color=CP_RED, width=2),
+                                name='Enemy Lead', hovertemplate='%{y:+,}g<extra></extra>'))
+
+                            # Threshold lines
+                            fig_gold.add_hline(y=3000, line_dash="dash", line_color="rgba(166, 227, 161, 0.5)",
+                                               annotation_text="+3k threshold")
+                            fig_gold.add_hline(y=-3000, line_dash="dash", line_color="rgba(243, 139, 168, 0.5)",
+                                               annotation_text="-3k threshold")
+                            fig_gold.add_hline(y=0, line_color="white", line_width=1)
+
+                            # Annotate peak lead/deficit
+                            if momentum_data['peak_lead'] > 0:
+                                fig_gold.add_annotation(
+                                    x=momentum_data['peak_lead_minute'], y=momentum_data['peak_lead'],
+                                    text=f"Peak Lead: +{momentum_data['peak_lead']:,}g",
+                                    showarrow=True, arrowcolor=CP_GREEN, font=dict(color=CP_GREEN))
+                            if momentum_data['peak_deficit'] < 0:
+                                fig_gold.add_annotation(
+                                    x=momentum_data['peak_deficit_minute'], y=momentum_data['peak_deficit'],
+                                    text=f"Peak Deficit: {momentum_data['peak_deficit']:,}g",
+                                    showarrow=True, arrowcolor=CP_RED, font=dict(color=CP_RED))
+
+                            fig_gold.update_layout(
+                                title="Gold Difference Over Time", template='plotly_dark',
+                                xaxis_title="Minutes", yaxis_title="Gold Difference",
+                                showlegend=True)
+                            st.plotly_chart(fig_gold, use_container_width=True, key=f"momentum_{match_id}")
+
+                            # Fight conversion
+                            st.markdown("---")
+                            st.subheader("Post-Fight Objective Conversion")
+
+                            conversion_data = analyze_fight_conversion(timeline, match, found_team_pids)
+
+                            if conversion_data['fights']:
+                                conv_df = pd.DataFrame(conversion_data['fights'])
+                                conv_df.columns = ['Fight #', 'Time', 'Outcome', 'Score', 'Converted?', 'Objectives']
+                                st.dataframe(conv_df, use_container_width=True, hide_index=True,
+                                             key=f"conv_table_{match_id}")
+
+                                col_c1, col_c2 = st.columns(2)
+                                with col_c1:
+                                    st.metric("Our Conversion Rate",
+                                              f"{conversion_data['team_conversion_rate']}%",
+                                              help="% of won fights where we took an objective within 60s")
+                                with col_c2:
+                                    st.metric("Enemy Conversion Rate",
+                                              f"{conversion_data['enemy_conversion_rate']}%",
+                                              help="% of lost fights where enemy took an objective within 60s")
+                            else:
+                                st.info("No teamfights detected for conversion analysis.")
 
                         # --- Game Summary (injected into Overview) ---
                         with tab_overview:
