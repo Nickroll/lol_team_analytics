@@ -20,12 +20,16 @@ def analyze_objective_setup(timeline, objective_event, team_participant_ids):
     elif obj_type == 'RIFTHERALD':
         target_pos = {'x': 5007, 'y': 10471}
 
+    team_pids_set = set(team_participant_ids)
     if target_pos:
         for frame in timeline['info']['frames']:
-            if frame['timestamp'] >= setup_window_start and frame['timestamp'] <= timestamp:
-                for event in frame['events']:
-                    if event['type'] == 'WARD_PLACED' and event.get('creatorId') in team_participant_ids:
-                        wards_placed += 1
+            if frame['timestamp'] < setup_window_start:
+                continue
+            if frame['timestamp'] > timestamp:
+                break
+            for event in frame['events']:
+                if event['type'] == 'WARD_PLACED' and event.get('creatorId') in team_pids_set:
+                    wards_placed += 1
 
     return {
         'wards_placed_60s': wards_placed,
@@ -80,15 +84,11 @@ def detect_objective_throw(timeline, match_data, team_participant_ids):
             monster_type = event.get('monsterType', 'UNKNOWN')
 
             # Find the frame closest to this timestamp for gold data
-            closest_frame = None
-            for f in frames:
-                if f['timestamp'] <= timestamp:
-                    closest_frame = f
-                else:
+            closest_frame = frame  # Current frame contains this event
+            for fi in range(len(frames) - 1, -1, -1):
+                if frames[fi]['timestamp'] <= timestamp:
+                    closest_frame = frames[fi]
                     break
-
-            if not closest_frame:
-                continue
 
             # Calculate gold diff
             our_gold = 0
@@ -109,10 +109,8 @@ def detect_objective_throw(timeline, match_data, team_participant_ids):
             obj_x = obj_pos.get('x', 0)
             obj_y = obj_pos.get('y', 0)
 
-            # Count players currently alive and near the objective
-            # We check who was NOT dead at that frame
+            # Find recently dead players (within 30s before the event)
             dead_pids = set()
-            # Look for recent deaths (within 30s before the event)
             death_window = 30000
             for f in frames:
                 if f['timestamp'] < timestamp - death_window:
@@ -120,7 +118,7 @@ def detect_objective_throw(timeline, match_data, team_participant_ids):
                 if f['timestamp'] > timestamp:
                     break
                 for ev in f.get('events', []):
-                    if ev['type'] == 'CHAMPION_KILL' and ev['timestamp'] <= timestamp:
+                    if ev['type'] == 'CHAMPION_KILL' and ev['timestamp'] <= timestamp and ev['timestamp'] >= timestamp - death_window:
                         dead_pids.add(ev.get('victimId'))
 
             our_alive_near = 0

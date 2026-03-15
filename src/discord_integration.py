@@ -12,10 +12,7 @@ def build_match_embed(summary_lines, stats_df, match_id, adv_df=None):
     is_win = any("Victory" in line for line in summary_lines) if summary_lines else False
     color = 0xa6e3a1 if is_win else 0xf38ba8  # Green for win, red for loss
 
-    # Build description from summary lines
-    description = "\n".join(
-        line.replace("**", "**") for line in summary_lines
-    ) if summary_lines else "No summary available."
+    description = "\n".join(summary_lines) if summary_lines else "No summary available."
 
     embed = {
         "title": f"{'🏆' if is_win else '💀'} Match Report — {match_id}",

@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import pandas as pd
 
 def calculate_harass_score(timeline_data, participant_id):
@@ -150,49 +151,60 @@ def calculate_early_ward_count(timeline_data, participant_id):
 def calculate_spotted_ganks(timeline_data, victim_id, enemy_jungler_id, enemy_jungler_path_df, team_participant_ids):
     if enemy_jungler_path_df.empty:
         return 0, 0
-    
+
     spotted = 0
     unspotted = 0
     cutoff = 14 * 60 * 1000
-    vision_range = 1000
+    vision_range_sq = 1000 ** 2
     gank_window = 30 * 1000
     active_wards = []
-    
-    def is_visible(segment, wards):
-        for _, row in segment.iterrows():
-            jx, jy = row['x'], row['y']
-            for w in wards:
-                if math.sqrt((jx - w['x'])**2 + (jy - w['y'])**2) <= vision_range:
-                    return True
+    team_pids_set = set(team_participant_ids)
+
+    # Pre-extract path arrays for fast slicing
+    path_timestamps = enemy_jungler_path_df['timestamp'].values
+    path_x = enemy_jungler_path_df['x'].values
+    path_y = enemy_jungler_path_df['y'].values
+
+    def is_visible(seg_x, seg_y, wards):
+        if not wards:
+            return False
+        ward_coords = np.array([[w['x'], w['y']] for w in wards])
+        for i in range(len(seg_x)):
+            dx = seg_x[i] - ward_coords[:, 0]
+            dy = seg_y[i] - ward_coords[:, 1]
+            if np.any(dx * dx + dy * dy <= vision_range_sq):
+                return True
         return False
 
     for frame in timeline_data['info']['frames']:
         ts = frame['timestamp']
         if ts > cutoff:
             break
-        
+
         active_wards = [w for w in active_wards if w['expiry'] > ts]
-        
+
         for event in frame.get('events', []):
-            if event['type'] == 'WARD_PLACED' and event.get('creatorId') in team_participant_ids:
+            if event['type'] == 'WARD_PLACED' and event.get('creatorId') in team_pids_set:
                 duration = 90000
                 wtype = event.get('wardType')
                 if wtype == 'CONTROL_WARD': duration = 1200000
                 elif wtype == 'SITE_WARD': duration = 150000
-                
+
                 pos = event.get('position')
                 if pos:
                     active_wards.append({'x': pos['x'], 'y': pos['y'], 'expiry': ts + duration})
-            
+
             if event['type'] == 'CHAMPION_KILL' and event.get('victimId') == victim_id:
                 killer = event.get('killerId')
                 assists = event.get('assistingParticipantIds', [])
                 if killer == enemy_jungler_id or enemy_jungler_id in assists:
                     window_start = ts - gank_window
-                    segment = enemy_jungler_path_df[(enemy_jungler_path_df['timestamp'] >= window_start) & (enemy_jungler_path_df['timestamp'] <= ts)]
-                    if not segment.empty and is_visible(segment, active_wards):
+                    mask = (path_timestamps >= window_start) & (path_timestamps <= ts)
+                    seg_x = path_x[mask]
+                    seg_y = path_y[mask]
+                    if len(seg_x) > 0 and is_visible(seg_x, seg_y, active_wards):
                         spotted += 1
                     else:
                         unspotted += 1
-                        
+
     return spotted, unspotted

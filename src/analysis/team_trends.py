@@ -1,13 +1,8 @@
 
 import pandas as pd
 import numpy as np
-import math
 from src.analysis.basic_stats import get_team_stats
-from src.analysis.advanced_stats import (
-    calculate_harass_score, calculate_greed_index, calculate_jungle_proximity,
-    calculate_gank_susceptibility, calculate_early_ward_count, calculate_spotted_ganks
-)
-from src.analysis.jungle_pathing import extract_jungle_path
+from src.analysis.common import compute_advanced_stats
 
 
 def calculate_gold_diff_at_15(match_timeline, team_id):
@@ -112,81 +107,22 @@ def analyze_player_trends(matches, puuids_dict, fetcher):
 
             # Fetch timeline for advanced stats
             timeline = fetcher.get_match_timeline(match_id)
-            
+
             # Build advanced stats if timeline available
-            adv_map = {}  # keyed by player name
+            adv_map = {}
             if timeline:
-                # Identify our jungler
-                jun_puuid = None
-                jungler_row = stats_df[stats_df['role'] == 'JUNGLE']
-                if not jungler_row.empty:
-                    j_name = jungler_row.iloc[0]['summonerName']
-                    for name, pid in puuids_dict.items():
-                        if name.split('#')[0].lower() == j_name.split('#')[0].lower():
-                            jun_puuid = pid
-                            break
-                    if not jun_puuid:
-                        target_p = next((p for p in match['info']['participants']
-                                        if p['championName'] == jungler_row.iloc[0]['championName']), None)
-                        if target_p:
-                            jun_puuid = target_p['puuid']
-
-                # Identify enemy jungler
-                enemy_jun_id = None
-                enemy_jun_puuid = None
-                for p in match['info']['participants']:
-                    if p['teamPosition'] == 'JUNGLE' and p['puuid'] not in puuid_list:
-                        enemy_jun_id = p['participantId']
-                        enemy_jun_puuid = p['puuid']
-                        break
-
-                enemy_j_path = pd.DataFrame()
-                if enemy_jun_puuid:
-                    enemy_j_path = extract_jungle_path(timeline, enemy_jun_puuid)
-
-                # Get team participant IDs from timeline
-                found_team_pids = []
-                for pid in puuid_list:
-                    for p in timeline['info']['participants']:
-                        if p['puuid'] == pid:
-                            found_team_pids.append(p['participantId'])
-                            break
-
-                for name, puuid in puuids_dict.items():
-                    p_id = None
-                    for p in timeline['info']['participants']:
-                        if p['puuid'] == puuid:
-                            p_id = p['participantId']
-                            break
-                    if not p_id:
-                        continue
-
-                    h_score = calculate_harass_score(timeline, p_id)
-                    p_team = next((p['teamId'] for p in match['info']['participants'] if p['puuid'] == puuid), 100)
-                    g_index = calculate_greed_index(timeline, p_id, p_team)
-                    j_prox = 0.0
-                    if jun_puuid and puuid != jun_puuid:
-                        j_id = None
-                        for pj in timeline['info']['participants']:
-                            if pj['puuid'] == jun_puuid:
-                                j_id = pj['participantId']
-                                break
-                        if j_id:
-                            j_prox = calculate_jungle_proximity(timeline, p_id, j_id)
-
-                    gank_deaths = calculate_gank_susceptibility(timeline, p_id, enemy_jun_id)
-                    early_wards = calculate_early_ward_count(timeline, p_id)
-                    spotted, unspotted = calculate_spotted_ganks(timeline, p_id, enemy_jun_id, enemy_j_path, found_team_pids)
-
-                    adv_map[name] = {
-                        'harass_score': h_score,
-                        'greed_index': g_index,
-                        'jungle_prox': j_prox,
-                        'gank_deaths': gank_deaths,
-                        'early_wards': early_wards,
-                        'spotted_deaths': spotted,
-                        'unspotted_deaths': unspotted,
-                    }
+                adv_df, _ = compute_advanced_stats(match, timeline, puuids_dict, stats_df)
+                if not adv_df.empty:
+                    for _, row in adv_df.iterrows():
+                        adv_map[row['summonerName']] = {
+                            'harass_score': row['harass_score'],
+                            'greed_index': row['greed_index'],
+                            'jungle_prox': row['jungle_prox'],
+                            'gank_deaths': row['gank_deaths'],
+                            'early_wards': row['early_wards'],
+                            'spotted_deaths': row['spotted_deaths'],
+                            'unspotted_deaths': row['unspotted_deaths'],
+                        }
 
             # Combine basic + advanced into rows
             for _, row in stats_df.iterrows():

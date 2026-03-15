@@ -6,7 +6,7 @@ from src.api.riot_client import RiotClient, ApiError
 from src.api.match_fetcher import MatchFetcher
 from src.api.match_cache import MatchCache
 from src.analysis.basic_stats import get_team_stats
-from src.analysis.advanced_stats import calculate_harass_score, calculate_greed_index, calculate_jungle_proximity, calculate_gank_susceptibility, calculate_early_ward_count, calculate_spotted_ganks
+from src.analysis.common import compute_advanced_stats
 from src.analysis.jungle_pathing import extract_jungle_path
 from src.analysis.team_trends import analyze_team_trends, analyze_player_trends
 from src.analysis.objectives import analyze_objective_setup, detect_objective_throw
@@ -16,6 +16,14 @@ from src.analysis.report_export import generate_report_image
 from src.discord_integration import send_to_discord
 from src.config import ConfigManager
 import os
+
+# Catppuccin Mocha palette
+CP_BLUE = "#89b4fa"
+CP_RED = "#f38ba8"
+CP_GREEN = "#a6e3a1"
+CP_YELLOW = "#f9e2af"
+CP_MAUVE = "#cba6f7"
+CP_COLORS = [CP_BLUE, CP_MAUVE, CP_GREEN, CP_YELLOW, CP_RED]
 
 # Page Config
 st.set_page_config(page_title="LoL Team Analytics", layout="wide")
@@ -113,7 +121,6 @@ if st.sidebar.button("Analyze Games"):
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
-# Render Results from Session State (Persists across reruns from other widgets)
 # Render Results from Session State (Persists across reruns from other widgets)
 if st.session_state.team_matches and st.session_state.puuids:
     team_matches = st.session_state.team_matches
@@ -302,37 +309,29 @@ if st.session_state.team_matches and st.session_state.puuids:
                     stats_df = get_team_stats(match, puuids.values())
                     
                     st.subheader("Team Overview")
-                    
-                    # KPI Comparisons
+
                     col1, col2 = st.columns(2)
-                    
-                    # Catppuccin Colors
-                    cp_blue = "#89b4fa"
-                    cp_red = "#f38ba8"
-                    cp_green = "#a6e3a1"
-                    cp_yellow = "#f9e2af"
-                    cp_mauve = "#cba6f7"
-                    
+
                     with col1:
                         st.caption("Damage Per Minute")
                         fig_dpm = px.bar(stats_df, x='summonerName', y='dpm', color='role', title="DPM by Player", 
-                                         color_discrete_sequence=[cp_blue, cp_mauve, cp_green, cp_yellow, cp_red], template='plotly_dark')
+                                         color_discrete_sequence=CP_COLORS, template='plotly_dark')
                         st.plotly_chart(fig_dpm, use_container_width=True, key=f"dpm_{match_id}")
                         
                         st.caption("Kill Participation %")
                         fig_kp = px.bar(stats_df, x='summonerName', y='kp_%', color='role', title="Kill Participation %", 
-                                        color_discrete_sequence=[cp_blue, cp_mauve, cp_green, cp_yellow, cp_red], template='plotly_dark')
+                                        color_discrete_sequence=CP_COLORS, template='plotly_dark')
                         st.plotly_chart(fig_kp, use_container_width=True, key=f"kp_{match_id}")
         
                     with col2:
                         st.caption("Gold Share %")
                         fig_gold = px.pie(stats_df, values='gold', names='summonerName', title="Gold Distribution", 
-                                          color_discrete_sequence=[cp_blue, cp_mauve, cp_green, cp_yellow, cp_red], template='plotly_dark')
+                                          color_discrete_sequence=CP_COLORS, template='plotly_dark')
                         st.plotly_chart(fig_gold, use_container_width=True, key=f"gold_{match_id}")
         
                         st.caption("Vision Score Per Minute")
                         fig_vspm = px.bar(stats_df, x='summonerName', y='vspm', color='role', title="Vision Score / Min", 
-                                          color_discrete_sequence=[cp_blue, cp_mauve, cp_green, cp_yellow, cp_red], template='plotly_dark')
+                                          color_discrete_sequence=CP_COLORS, template='plotly_dark')
                         st.plotly_chart(fig_vspm, use_container_width=True, key=f"vspm_{match_id}")
                     
                     with st.expander("View Full Stats Table"):
@@ -344,79 +343,12 @@ if st.session_state.team_matches and st.session_state.puuids:
                         timeline = fetcher.get_match_timeline(match_id)
                     
                     if timeline:
-                        # --- Pre-calculate Advanced Stats ---
-                        adv_stats = []
-                        jun_puuid = None 
-                        
-                        # Identify Jungler
+                        adv_df, found_team_pids = compute_advanced_stats(match, timeline, puuids, stats_df)
                         jungler_row = stats_df[stats_df['role'] == 'JUNGLE']
+                        jun_puuid = None
                         if not jungler_row.empty:
-                            j_name = jungler_row.iloc[0]['summonerName']
-                            for name, pid in puuids.items():
-                                if name.split('#')[0].lower() == j_name.split('#')[0].lower():
-                                    jun_puuid = pid
-                                    break
-                            if not jun_puuid:
-                                 target_p = next((p for p in match['info']['participants'] if p['championName'] == jungler_row.iloc[0]['championName']), None)
-                                 if target_p: jun_puuid = target_p['puuid']
-
-                        # Identify ENEMY Jungler
-                        enemy_jun_id = None
-                        enemy_jun_puuid = None
-                        for p in match['info']['participants']:
-                            if p['teamPosition'] == 'JUNGLE' and p['puuid'] not in puuids.values():
-                                enemy_jun_id = p['participantId']
-                                enemy_jun_puuid = p['puuid']
-                                break
-                                
-                        enemy_j_path = pd.DataFrame()
-                        if enemy_jun_puuid:
-                            enemy_j_path = extract_jungle_path(timeline, enemy_jun_puuid)
-
-                        found_team_pids = []
-                        for pid in puuids.values():
-                             for p in timeline['info']['participants']:
-                                if p['puuid'] == pid:
-                                    found_team_pids.append(p['participantId'])
-                                    break
-
-                        for name, pid in puuids.items():
-                            p_id = None
-                            for p in timeline['info']['participants']:
-                                if p['puuid'] == pid:
-                                    p_id = p['participantId']
-                                    break
-                            
-                            if p_id:
-                                h_score = calculate_harass_score(timeline, p_id)
-                                p_team = next((p['teamId'] for p in match['info']['participants'] if p['puuid'] == pid), 100)
-                                g_index = calculate_greed_index(timeline, p_id, p_team)
-                                j_prox = 0.0
-                                if jun_puuid and pid != jun_puuid:
-                                    j_id = None 
-                                    for pj in timeline['info']['participants']:
-                                        if pj['puuid'] == jun_puuid:
-                                            j_id = pj['participantId']
-                                            break
-                                    if j_id:
-                                        j_prox = calculate_jungle_proximity(timeline, p_id, j_id)
-                                
-                                gank_deaths = calculate_gank_susceptibility(timeline, p_id, enemy_jun_id)
-                                early_wards = calculate_early_ward_count(timeline, p_id)
-                                spotted, unspotted = calculate_spotted_ganks(timeline, p_id, enemy_jun_id, enemy_j_path, found_team_pids)
-
-                                adv_stats.append({
-                                    'summonerName': name,
-                                    'harass_score': h_score,
-                                    'greed_index': g_index,
-                                    'jungle_prox': j_prox,
-                                    'gank_deaths': gank_deaths,
-                                    'early_wards': early_wards,
-                                    'spotted_deaths': spotted,
-                                    'unspotted_deaths': unspotted
-                                })
-                        
-                        adv_df = pd.DataFrame(adv_stats)
+                            from src.analysis.common import identify_jungler
+                            jun_puuid = identify_jungler(stats_df, puuids, match['info']['participants'])
 
                         # --- Tab 2: Laning Phase ---
                         with tab_laning:
@@ -452,7 +384,7 @@ if st.session_state.team_matches and st.session_state.puuids:
                                                        title="Gank Susceptibility", size_max=60,
                                                        labels={'early_wards': 'Wards Placed (0-14m)', 'gank_deaths': 'Deaths to Ganks'},
                                                        template='plotly_dark')
-                                    fig_v.update_traces(textposition='top center', marker=dict(size=12, color=cp_red))
+                                    fig_v.update_traces(textposition='top center', marker=dict(size=12, color=CP_RED))
                                     fig_v.update_layout(xaxis=dict(autorange="reversed"))
                                     st.plotly_chart(fig_v, use_container_width=True, key=f"vis_{match_id}")
 
@@ -461,7 +393,7 @@ if st.session_state.team_matches and st.session_state.puuids:
                                     fig_s = px.bar(adv_df, x='summonerName', y=['spotted_deaths', 'unspotted_deaths'], 
                                                    title="Gank Detection",
                                                    labels={'value': 'Deaths', 'variable': 'Type'},
-                                                   color_discrete_map={'spotted_deaths': cp_red, 'unspotted_deaths': '#7f849c'},
+                                                   color_discrete_map={'spotted_deaths': CP_RED, 'unspotted_deaths': '#7f849c'},
                                                    template='plotly_dark')
                                     new_names = {'spotted_deaths': 'Spotted (Awareness)', 'unspotted_deaths': 'Unspotted (Vision)'}
                                     fig_s.for_each_trace(lambda t: t.update(name = new_names[t.name]))
@@ -477,23 +409,23 @@ if st.session_state.team_matches and st.session_state.puuids:
                                     
                                     fig = go.Figure()
                                     fig.add_trace(go.Scatter(x=path_df['x'], y=path_df['y'], mode='lines', name='Path',
-                                                             line=dict(color=cp_yellow, width=2), opacity=0.4, hoverinfo='skip'))
+                                                             line=dict(color=CP_YELLOW, width=2), opacity=0.4, hoverinfo='skip'))
                                     pos_df = path_df[path_df['type'] == 'POSITION']
                                     if not pos_df.empty:
                                         fig.add_trace(go.Scatter(x=pos_df['x'], y=pos_df['y'], mode='markers+text', name='Minute',
-                                                                 marker=dict(size=6, color=cp_yellow, opacity=0.7),
+                                                                 marker=dict(size=6, color=CP_YELLOW, opacity=0.7),
                                                                  text=(pos_df['timestamp'] / 60000).astype(int),
                                                                  textposition="top center", textfont=dict(color='white', size=9), hoverinfo='skip'))
                                     kills_df = path_df[path_df['type'].isin(['KILL_PARTICIPATION'])]
                                     if not kills_df.empty:
                                         fig.add_trace(go.Scatter(x=kills_df['x'], y=kills_df['y'], mode='markers', name='Kill/Assist',
-                                                                 marker=dict(symbol='x', size=10, color=cp_red),
+                                                                 marker=dict(symbol='x', size=10, color=CP_RED),
                                                                  text=kills_df['timestamp'].apply(lambda x: f"{x/60000:.1f}m"),
                                                                  hovertemplate="Kil/Ast: %{text}<extra></extra>"))
                                     elite_df = path_df[path_df['type'] == 'ELITE_KILL']
                                     if not elite_df.empty:
                                         fig.add_trace(go.Scatter(x=elite_df['x'], y=elite_df['y'], mode='markers', name='Elite',
-                                                                 marker=dict(symbol='star', size=15, color=cp_mauve),
+                                                                 marker=dict(symbol='star', size=15, color=CP_MAUVE),
                                                                  text=elite_df['info'], hovertemplate="Elite: %{text}<extra></extra>"))
 
                                     fig.update_layout(title=f"Pathing - {j_name} ({j_champ})", width=600, height=600, showlegend=True,
