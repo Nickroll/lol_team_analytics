@@ -266,6 +266,22 @@ if st.session_state.team_matches and st.session_state.puuids:
                         fig.add_hline(y=1.0, line_dash="dash", line_color="#a6e3a1", annotation_text="Even")
                         st.plotly_chart(fig, use_container_width=True, key="trend_harass")
 
+                        if 'gold_diff_15' in filtered_df.columns:
+                            fig = px.line(filtered_df, x='game_num', y='gold_diff_15', color='player', markers=True,
+                                          title="Gold Diff vs Lane Opponent @ 15m",
+                                          labels={'game_num': 'Game #', 'gold_diff_15': 'Gold Diff'},
+                                          template='plotly_dark')
+                            fig.add_hline(y=0, line_dash="dash", line_color="white")
+                            st.plotly_chart(fig, use_container_width=True, key="trend_gold_diff")
+
+                        if 'cs_diff_15' in filtered_df.columns:
+                            fig = px.line(filtered_df, x='game_num', y='cs_diff_15', color='player', markers=True,
+                                          title="CS Diff vs Lane Opponent @ 15m",
+                                          labels={'game_num': 'Game #', 'cs_diff_15': 'CS Diff'},
+                                          template='plotly_dark')
+                            fig.add_hline(y=0, line_dash="dash", line_color="white")
+                            st.plotly_chart(fig, use_container_width=True, key="trend_cs_diff")
+
                     with col2:
                         fig = px.line(filtered_df, x='game_num', y='dpg', color='player', markers=True,
                                       title="Damage Per Gold (Efficiency)",
@@ -278,6 +294,47 @@ if st.session_state.team_matches and st.session_state.puuids:
                                       labels={'game_num': 'Game #', 'jungle_prox': 'Prox%'},
                                       template='plotly_dark')
                         st.plotly_chart(fig, use_container_width=True, key="trend_jprox")
+
+                        # Lane phase win rate
+                        if 'gold_diff_15' in filtered_df.columns:
+                            lane_wr = (
+                                filtered_df.assign(lane_win=filtered_df['gold_diff_15'] > 0)
+                                .groupby('player')['lane_win']
+                                .mean()
+                                .mul(100)
+                                .reset_index()
+                                .rename(columns={'lane_win': 'Lane Win %'})
+                            )
+                            fig_lwr = px.bar(lane_wr, x='player', y='Lane Win %',
+                                             title="Lane Phase Win Rate (Gold ahead @ 15m)",
+                                             color='Lane Win %', color_continuous_scale='RdYlGn',
+                                             range_color=[0, 100], template='plotly_dark')
+                            fig_lwr.add_hline(y=50, line_dash="dash", line_color="white", annotation_text="50%")
+                            st.plotly_chart(fig_lwr, use_container_width=True, key="trend_lane_wr")
+
+                        # Average early death breakdown
+                        death_trend_cols = ['solo_kills', 'gank_deaths', 'multi_deaths', 'dive_deaths']
+                        avail_dt = [c for c in death_trend_cols if c in filtered_df.columns]
+                        if avail_dt:
+                            avg_deaths = filtered_df.groupby('player')[avail_dt].mean().reset_index()
+                            fig_dt = px.bar(avg_deaths, x='player', y=avail_dt,
+                                            title="Avg Early Death Breakdown (Pre-14m)",
+                                            labels={'value': 'Avg Deaths', 'variable': 'Type'},
+                                            color_discrete_map={
+                                                'gank_deaths':  CP_RED,
+                                                'solo_kills':   CP_MAUVE,
+                                                'multi_deaths': CP_YELLOW,
+                                                'dive_deaths':  CP_BLUE,
+                                            },
+                                            template='plotly_dark', barmode='stack')
+                            rename_dt = {
+                                'gank_deaths':  'Gank (JG involved)',
+                                'solo_kills':   'Solo (1v1 loss)',
+                                'multi_deaths': 'Multi-enemy (roam)',
+                                'dive_deaths':  'Near own tower',
+                            }
+                            fig_dt.for_each_trace(lambda t: t.update(name=rename_dt.get(t.name, t.name)))
+                            st.plotly_chart(fig_dt, use_container_width=True, key="trend_death_types")
 
                 # --- Advanced & Vision ---
                 with tab_advanced:
@@ -311,13 +368,22 @@ if st.session_state.team_matches and st.session_state.puuids:
                 # Player Averages Table
                 st.markdown("---")
                 st.subheader("📋 Player Averages Across All Games")
-                avg_cols = ['kda_ratio', 'dpm', 'cspm', 'vspm', 'kp_%', 'dmg_%', 'gold_%',
-                            'harass_score', 'greed_index', 'jungle_prox', 'gank_deaths', 'early_wards']
+                avg_cols = [
+                    'kda_ratio', 'dpm', 'cspm', 'vspm', 'kp_%', 'dmg_%', 'gold_%',
+                    'harass_score', 'greed_index', 'jungle_prox', 'gank_deaths', 'early_wards',
+                    'gold_diff_15', 'cs_diff_15', 'xp_diff_15', 'solo_kills', 'multi_deaths', 'dive_deaths',
+                ]
+                col_labels = {
+                    'kda_ratio': 'Avg KDA', 'dpm': 'Avg DPM', 'cspm': 'Avg CS/M', 'vspm': 'Avg VS/M',
+                    'kp_%': 'Avg KP%', 'dmg_%': 'Avg Dmg%', 'gold_%': 'Avg Gold%',
+                    'harass_score': 'Avg Harass', 'greed_index': 'Avg Greed',
+                    'jungle_prox': 'Avg JG Prox%', 'gank_deaths': 'Avg Gank Deaths', 'early_wards': 'Avg Wards<14m',
+                    'gold_diff_15': 'Avg Gold Diff@15', 'cs_diff_15': 'Avg CS Diff@15', 'xp_diff_15': 'Avg XP Diff@15',
+                    'solo_kills': 'Avg Solo Deaths', 'multi_deaths': 'Avg Multi Deaths', 'dive_deaths': 'Avg Dive Deaths',
+                }
                 avail = [c for c in avg_cols if c in filtered_df.columns]
                 avg_df = filtered_df.groupby('player')[avail].mean().round(2).reset_index()
-                avg_df.columns = ['Player', 'Avg KDA', 'Avg DPM', 'Avg CS/M', 'Avg VS/M',
-                                  'Avg KP%', 'Avg Dmg%', 'Avg Gold%',
-                                  'Avg Harass', 'Avg Greed', 'Avg JG Prox%', 'Avg Gank Deaths', 'Avg Wards<14m'][:len(avail)+1]
+                avg_df.columns = ['Player'] + [col_labels[c] for c in avail]
                 st.dataframe(avg_df, use_container_width=True)
 
             else:
@@ -392,18 +458,67 @@ if st.session_state.team_matches and st.session_state.puuids:
                                 col_l1, col_l2 = st.columns(2)
                                 with col_l1:
                                     st.caption("Laning Harass Score (Dmg/Taken @ 14m)")
-                                    fig_h = px.bar(adv_df, x='summonerName', y='harass_score', title="Harass Score", 
+                                    fig_h = px.bar(adv_df, x='summonerName', y='harass_score', title="Harass Score",
                                                    color='harass_score', color_continuous_scale='RdYlGn', template='plotly_dark')
                                     st.plotly_chart(fig_h, use_container_width=True, key=f"harass_{match_id}")
                                 with col_l2:
                                     st.caption("Jungle Proximity % (0-14m)")
                                     j_prox_df = adv_df[adv_df['jungle_prox'] > 0]
                                     if not j_prox_df.empty:
-                                        fig_j = px.bar(j_prox_df, x='summonerName', y='jungle_prox', title="Jungle Prox %", 
+                                        fig_j = px.bar(j_prox_df, x='summonerName', y='jungle_prox', title="Jungle Prox %",
                                                        color='jungle_prox', color_continuous_scale='Blues', template='plotly_dark')
                                         st.plotly_chart(fig_j, use_container_width=True, key=f"prox_{match_id}")
                                     else:
                                         st.info("No meaningful jungle proximity detected.")
+
+                                st.markdown("---")
+                                st.subheader("Lane Differentials vs Opponent @ 15m")
+                                col_ld1, col_ld2, col_ld3 = st.columns(3)
+                                diff_cols = [
+                                    (col_ld1, 'gold_diff_15', 'Gold Diff @ 15m', 'Gold'),
+                                    (col_ld2, 'cs_diff_15',   'CS Diff @ 15m',   'CS'),
+                                    (col_ld3, 'xp_diff_15',   'XP Diff @ 15m',   'XP'),
+                                ]
+                                for col, metric, title, ylabel in diff_cols:
+                                    with col:
+                                        if metric in adv_df.columns:
+                                            colors = [CP_GREEN if v >= 0 else CP_RED for v in adv_df[metric]]
+                                            fig_d = go.Figure(go.Bar(
+                                                x=adv_df['summonerName'], y=adv_df[metric],
+                                                marker_color=colors, text=adv_df[metric],
+                                                textposition='outside'))
+                                            fig_d.add_hline(y=0, line_color='white', line_width=1)
+                                            fig_d.update_layout(title=title, yaxis_title=ylabel,
+                                                                template='plotly_dark', showlegend=False)
+                                            st.plotly_chart(fig_d, use_container_width=True, key=f"{metric}_{match_id}")
+
+                                st.markdown("---")
+                                st.subheader("Early Death Breakdown (Pre-14m)")
+                                death_cols = ['gank_death', 'solo_kills', 'multi_deaths', 'dive_deaths']
+                                avail_death = [c for c in death_cols if c in adv_df.columns]
+                                if avail_death:
+                                    death_color_map = {
+                                        'gank_death':  CP_RED,
+                                        'solo_kills':  CP_MAUVE,
+                                        'multi_deaths': CP_YELLOW,
+                                        'dive_deaths': CP_BLUE,
+                                    }
+                                    # rename gank_deaths column if present
+                                    plot_df = adv_df.rename(columns={'gank_deaths': 'gank_death'})
+                                    avail_death_plot = [c for c in death_cols if c in plot_df.columns]
+                                    fig_dc = px.bar(plot_df, x='summonerName', y=avail_death_plot,
+                                                    title="Death Types (Pre-14m)",
+                                                    labels={'value': 'Deaths', 'variable': 'Type'},
+                                                    color_discrete_map=death_color_map,
+                                                    template='plotly_dark', barmode='stack')
+                                    rename_map = {
+                                        'gank_death':  'Gank (JG involved)',
+                                        'solo_kills':  'Solo (1v1 loss)',
+                                        'multi_deaths': 'Multi-enemy (roam)',
+                                        'dive_deaths': 'Near own tower',
+                                    }
+                                    fig_dc.for_each_trace(lambda t: t.update(name=rename_map.get(t.name, t.name)))
+                                    st.plotly_chart(fig_dc, use_container_width=True, key=f"deathclass_{match_id}")
 
                         # --- Tab 3: Vision & Deaths ---
                         with tab_vision:

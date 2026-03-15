@@ -59,6 +59,31 @@ def build_match_embed(summary_lines, stats_df, match_id, adv_df=None):
             "inline": False,
         })
 
+        # Laning phase stats (only if the new columns are present)
+        if 'gold_diff_15' in adv_df.columns:
+            lane_lines = []
+            for _, row in adv_df.iterrows():
+                name = str(row.get('summonerName', '?'))
+                gold_d  = int(row.get('gold_diff_15', 0))
+                cs_d    = int(row.get('cs_diff_15', 0))
+                xp_d    = int(row.get('xp_diff_15', 0))
+                solo    = int(row.get('solo_kills', 0))
+                ganks2  = int(row.get('gank_deaths', 0))
+                multi   = int(row.get('multi_deaths', 0))
+                gold_str = f"{gold_d:+,}"
+                cs_str   = f"{cs_d:+}"
+                xp_str   = f"{xp_d:+,}"
+                lane_lines.append(
+                    f"**{name}**: Gold {gold_str} | CS {cs_str} | XP {xp_str} | "
+                    f"Solo {solo} / Gank {ganks2} / Multi {multi} deaths"
+                )
+
+            fields.append({
+                "name": "⚔️ Laning Phase (@15m)",
+                "value": "\n".join(lane_lines),
+                "inline": False,
+            })
+
     embed["fields"] = fields
     return embed
 

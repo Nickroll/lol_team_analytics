@@ -2,6 +2,75 @@ import math
 import numpy as np
 import pandas as pd
 
+# Approximate outer tower positions (blue-side and red-side)
+_BLUE_OUTER_TOWERS = [(1325, 10950), (5048, 4812), (10950, 1325)]
+_RED_OUTER_TOWERS  = [(4530, 13870), (9560, 10076), (13870, 4530)]
+
+
+def calculate_laning_diffs(timeline, participant_id, opponent_id):
+    """
+    Gold, CS, and XP difference vs lane opponent at 15 minutes.
+    Positive values mean the player is ahead.
+    """
+    frames = timeline['info']['frames']
+    target_idx = min(15, len(frames) - 1)
+    frame = frames[target_idx]
+    p_frames = frame.get('participantFrames', {})
+
+    p   = p_frames.get(str(participant_id), {})
+    opp = p_frames.get(str(opponent_id), {})
+
+    gold_diff = p.get('totalGold', 0) - opp.get('totalGold', 0)
+    cs_diff   = (p.get('minionsKilled', 0) + p.get('jungleMinionsKilled', 0)) - \
+                (opp.get('minionsKilled', 0) + opp.get('jungleMinionsKilled', 0))
+    xp_diff   = p.get('xp', 0) - opp.get('xp', 0)
+
+    return {'gold_diff_15': gold_diff, 'cs_diff_15': cs_diff, 'xp_diff_15': xp_diff}
+
+
+def classify_early_deaths(timeline, participant_id, enemy_jungler_id, is_blue_side):
+    """
+    Classifies pre-14 min deaths into:
+      solo_kill   — killed 1v1 by laner only, no assists (pure mechanical loss)
+      gank_death  — enemy jungler was the killer or an assister
+      multi_death — 2+ enemies involved but jungler not among them (e.g. roaming mid)
+      dive_death  — died within ~1500 units of an own outer tower (can overlap the above)
+
+    Returns a dict with counts for each category.
+    """
+    frames = timeline['info']['frames']
+    cutoff = 14 * 60 * 1000
+    tower_list = _BLUE_OUTER_TOWERS if is_blue_side else _RED_OUTER_TOWERS
+    threshold_sq = 1500 ** 2
+    counts = {'solo_kill': 0, 'gank_death': 0, 'multi_death': 0, 'dive_death': 0}
+
+    for frame in frames:
+        if frame['timestamp'] > cutoff:
+            break
+        for event in frame.get('events', []):
+            if event['type'] != 'CHAMPION_KILL' or event.get('victimId') != participant_id:
+                continue
+
+            killer  = event.get('killerId', 0)
+            assists = event.get('assistingParticipantIds', [])
+            all_enemies = set([killer] + assists) - {0}
+            jungler_involved = bool(enemy_jungler_id and enemy_jungler_id in all_enemies)
+
+            if jungler_involved:
+                counts['gank_death'] += 1
+            elif len(all_enemies) <= 1:
+                counts['solo_kill'] += 1
+            else:
+                counts['multi_death'] += 1
+
+            pos = event.get('position', {})
+            if pos:
+                x, y = pos.get('x', 0), pos.get('y', 0)
+                if any((x - tx) ** 2 + (y - ty) ** 2 <= threshold_sq for tx, ty in tower_list):
+                    counts['dive_death'] += 1
+
+    return counts
+
 def calculate_harass_score(timeline_data, participant_id):
     """
     Calculates Laning Phase Harass Score (0-14 min).

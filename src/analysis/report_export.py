@@ -25,6 +25,7 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
     cp_green = '#a6e3a1'
 
     has_momentum = momentum_data is not None and 'gold_timeline' in momentum_data
+    has_laning = adv_df is not None and not adv_df.empty and 'gold_diff_15' in adv_df.columns
 
     # Build title string: "Victory · Clean Win · 32 min"
     title_parts = []
@@ -42,25 +43,43 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
                 break
     title_text = " · ".join(title_parts)
 
-    # Determine layout based on whether we have momentum data
+    # Layout: scoreboard → laning (if available) → gold timeline (if available) → callouts
+    specs = [[{"type": "table"}]]
+    row_heights = []
+
+    if has_laning:
+        specs.append([{"type": "table"}])
     if has_momentum:
-        fig = make_subplots(
-            rows=3, cols=1,
-            specs=[[{"type": "table"}], [{"type": "scatter"}], [{"type": "table"}]],
-            vertical_spacing=0.06,
-            row_heights=[0.35, 0.40, 0.25],
-        )
+        specs.append([{"type": "scatter"}])
+    specs.append([{"type": "table"}])
+
+    if has_laning and has_momentum:
+        row_heights = [0.22, 0.18, 0.38, 0.22]
+    elif has_laning:
+        row_heights = [0.35, 0.30, 0.35]
+    elif has_momentum:
+        row_heights = [0.35, 0.40, 0.25]
     else:
-        fig = make_subplots(
-            rows=2, cols=1,
-            specs=[[{"type": "table"}], [{"type": "table"}]],
-            vertical_spacing=0.08,
-            row_heights=[0.60, 0.40],
-        )
+        row_heights = [0.60, 0.40]
+
+    fig = make_subplots(
+        rows=len(specs), cols=1,
+        specs=specs,
+        vertical_spacing=0.05,
+        row_heights=row_heights,
+    )
+
+    # Track which row each section goes in
+    _row = [1]
+    def next_row():
+        r = _row[0]
+        _row[0] += 1
+        return r
 
     # ═══════════════════════════════════════════
-    # Row 1: Compact Scoreboard
+    # Row: Compact Scoreboard
     # ═══════════════════════════════════════════
+    scoreboard_row = next_row()
     if not stats_df.empty:
         display_cols = ['championName', 'summonerName', 'kills', 'deaths', 'assists', 'dpm', 'cspm', 'kp_%']
         available_cols = [c for c in display_cols if c in stats_df.columns]
@@ -76,8 +95,6 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
             if c in ('dpm', 'cspm', 'kp_%'):
                 values[i] = [f"{v:.1f}" if isinstance(v, (int, float)) else v for v in values[i]]
 
-        # Color deaths red if >= 5
-        death_idx = available_cols.index('deaths') if 'deaths' in available_cols else None
         cell_font_colors = []
         for i, c in enumerate(available_cols):
             if c == 'deaths':
@@ -98,13 +115,59 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
                     line_color=bg_mantle, height=26,
                 ),
             ),
-            row=1, col=1,
+            row=scoreboard_row, col=1,
         )
 
     # ═══════════════════════════════════════════
-    # Row 2: Gold Timeline Chart (if momentum data available)
+    # Row: Laning Stats (if available)
+    # ═══════════════════════════════════════════
+    if has_laning:
+        laning_row = next_row()
+        lane_display = ['summonerName', 'gold_diff_15', 'cs_diff_15', 'xp_diff_15',
+                        'solo_kills', 'gank_deaths', 'multi_deaths', 'dive_deaths']
+        lane_avail = [c for c in lane_display if c in adv_df.columns]
+        lane_headers_map = {
+            'summonerName': 'Player',
+            'gold_diff_15': 'Gold Δ@15', 'cs_diff_15': 'CS Δ@15', 'xp_diff_15': 'XP Δ@15',
+            'solo_kills': 'Solo Deaths', 'gank_deaths': 'Gank Deaths',
+            'multi_deaths': 'Multi Deaths', 'dive_deaths': 'Dive Deaths',
+        }
+        lane_headers = [lane_headers_map.get(c, c) for c in lane_avail]
+        lane_values = []
+        lane_font_colors = []
+        diff_cols = {'gold_diff_15', 'cs_diff_15', 'xp_diff_15'}
+        for c in lane_avail:
+            col_vals = adv_df[c].tolist()
+            if c in diff_cols:
+                formatted = [f"{int(v):+,}" if isinstance(v, (int, float)) else v for v in col_vals]
+                colors = [cp_green if v >= 0 else cp_red for v in col_vals]
+            else:
+                formatted = [str(int(v)) if isinstance(v, (int, float)) else v for v in col_vals]
+                colors = [text_main] * len(col_vals)
+            lane_values.append(formatted)
+            lane_font_colors.append(colors)
+
+        fig.add_trace(
+            go.Table(
+                header=dict(
+                    values=lane_headers, fill_color=bg_base,
+                    font=dict(color=text_main, size=11), align='center',
+                    line_color=bg_mantle,
+                ),
+                cells=dict(
+                    values=lane_values, fill_color=bg_mantle,
+                    font=dict(color=lane_font_colors, size=11), align='center',
+                    line_color=bg_mantle, height=24,
+                ),
+            ),
+            row=laning_row, col=1,
+        )
+
+    # ═══════════════════════════════════════════
+    # Row: Gold Timeline Chart (if momentum data available)
     # ═══════════════════════════════════════════
     if has_momentum:
+        timeline_row = next_row()
         gold_tl = momentum_data['gold_timeline']
         minutes = [f['minute'] for f in gold_tl]
         diffs = [f['gold_diff'] for f in gold_tl]
@@ -118,7 +181,7 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
                 line=dict(color=cp_blue, width=2),
                 name='Our Lead', showlegend=False,
             ),
-            row=2, col=1,
+            row=timeline_row, col=1,
         )
         fig.add_trace(
             go.Scatter(
@@ -127,24 +190,22 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
                 line=dict(color=cp_red, width=2),
                 name='Enemy Lead', showlegend=False,
             ),
-            row=2, col=1,
+            row=timeline_row, col=1,
         )
 
-        # Threshold lines
         fig.add_hline(y=3000, line_dash="dash", line_color="rgba(166, 227, 161, 0.4)",
-                      row=2, col=1)
+                      row=timeline_row, col=1)
         fig.add_hline(y=-3000, line_dash="dash", line_color="rgba(243, 139, 168, 0.4)",
-                      row=2, col=1)
-        fig.add_hline(y=0, line_color="white", line_width=1, row=2, col=1)
+                      row=timeline_row, col=1)
+        fig.add_hline(y=0, line_color="white", line_width=1, row=timeline_row, col=1)
 
-        # Peak annotations
         if momentum_data['peak_lead'] > 0:
             fig.add_annotation(
                 x=momentum_data['peak_lead_minute'], y=momentum_data['peak_lead'],
                 text=f"+{momentum_data['peak_lead']:,}g",
                 showarrow=True, arrowcolor=cp_green,
                 font=dict(color=cp_green, size=10),
-                row=2, col=1,
+                row=timeline_row, col=1,
             )
         if momentum_data['peak_deficit'] < 0:
             fig.add_annotation(
@@ -152,13 +213,13 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
                 text=f"{momentum_data['peak_deficit']:,}g",
                 showarrow=True, arrowcolor=cp_red,
                 font=dict(color=cp_red, size=10),
-                row=2, col=1,
+                row=timeline_row, col=1,
             )
 
     # ═══════════════════════════════════════════
-    # Row 3 (or 2 if no momentum): Key Callouts
+    # Row: Key Callouts
     # ═══════════════════════════════════════════
-    callout_row = 3 if has_momentum else 2
+    callout_row = next_row()
 
     callout_headers = []
     callout_values = []
@@ -225,7 +286,12 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
     # ═══════════════════════════════════════════
     # Layout
     # ═══════════════════════════════════════════
-    height = 800 if has_momentum else 500
+    if has_laning and has_momentum:
+        height = 1000
+    elif has_laning or has_momentum:
+        height = 700
+    else:
+        height = 500
     fig.update_layout(
         title=dict(text=title_text, font=dict(color=text_main, size=16)),
         width=1200,
@@ -241,12 +307,12 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
         fig.update_xaxes(
             title_text="Minutes", title_font=dict(color=text_sub, size=10),
             tickfont=dict(color=text_sub, size=9), gridcolor='#45475a',
-            row=2, col=1,
+            row=timeline_row, col=1,
         )
         fig.update_yaxes(
             title_text="Gold Diff", title_font=dict(color=text_sub, size=10),
             tickfont=dict(color=text_sub, size=9), gridcolor='#45475a',
-            row=2, col=1,
+            row=timeline_row, col=1,
         )
 
     try:

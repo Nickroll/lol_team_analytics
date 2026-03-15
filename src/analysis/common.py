@@ -1,7 +1,8 @@
 import pandas as pd
 from src.analysis.advanced_stats import (
     calculate_harass_score, calculate_greed_index, calculate_jungle_proximity,
-    calculate_gank_susceptibility, calculate_early_ward_count, calculate_spotted_ganks
+    calculate_gank_susceptibility, calculate_early_ward_count, calculate_spotted_ganks,
+    calculate_laning_diffs, classify_early_deaths,
 )
 from src.analysis.jungle_pathing import extract_jungle_path
 
@@ -29,6 +30,22 @@ def identify_jungler(stats_df, puuids_dict, match_participants):
     return target_p['puuid'] if target_p else None
 
 
+def find_lane_opponent_id(puuid, participants):
+    """Returns participantId of the same-role player on the opposing team, or None."""
+    our_p = next((p for p in participants if p['puuid'] == puuid), None)
+    if not our_p:
+        return None
+    role    = our_p.get('teamPosition', '')
+    team_id = our_p.get('teamId', 0)
+    if not role:
+        return None
+    opp = next(
+        (p for p in participants if p.get('teamPosition') == role and p['teamId'] != team_id),
+        None
+    )
+    return opp['participantId'] if opp else None
+
+
 def identify_enemy_jungler(match_participants, team_puuid_set):
     """Returns (participantId, puuid) of the enemy jungler, or (None, None)."""
     for p in match_participants:
@@ -41,7 +58,8 @@ def compute_advanced_stats(match, timeline, puuids_dict, stats_df):
     """
     Computes advanced stats for all players in a match.
     Returns a DataFrame with columns: summonerName, harass_score, greed_index,
-    jungle_prox, gank_deaths, early_wards, spotted_deaths, unspotted_deaths.
+    jungle_prox, gank_deaths, early_wards, spotted_deaths, unspotted_deaths,
+    gold_diff_15, cs_diff_15, xp_diff_15, solo_kills, multi_deaths, dive_deaths.
     """
     puuid_set = set(puuids_dict.values())
     puuid_to_pid = build_puuid_to_pid(timeline)
@@ -76,6 +94,16 @@ def compute_advanced_stats(match, timeline, puuids_dict, stats_df):
         early_wards = calculate_early_ward_count(timeline, p_id)
         spotted, unspotted = calculate_spotted_ganks(timeline, p_id, enemy_jun_id, enemy_j_path, found_team_pids)
 
+        # Laning diffs vs lane opponent
+        opp_pid = find_lane_opponent_id(puuid, participants)
+        laning = {'gold_diff_15': 0, 'cs_diff_15': 0, 'xp_diff_15': 0}
+        if opp_pid:
+            laning = calculate_laning_diffs(timeline, p_id, opp_pid)
+
+        # Death classification
+        is_blue = (p_team == 100)
+        death_classes = classify_early_deaths(timeline, p_id, enemy_jun_id, is_blue)
+
         adv_stats.append({
             'summonerName': name,
             'harass_score': h_score,
@@ -85,6 +113,12 @@ def compute_advanced_stats(match, timeline, puuids_dict, stats_df):
             'early_wards': early_wards,
             'spotted_deaths': spotted,
             'unspotted_deaths': unspotted,
+            'gold_diff_15': laning['gold_diff_15'],
+            'cs_diff_15':   laning['cs_diff_15'],
+            'xp_diff_15':   laning['xp_diff_15'],
+            'solo_kills':   death_classes['solo_kill'],
+            'multi_deaths': death_classes['multi_death'],
+            'dive_deaths':  death_classes['dive_death'],
         })
 
     return pd.DataFrame(adv_stats), found_team_pids

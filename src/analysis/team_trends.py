@@ -137,13 +137,19 @@ def analyze_player_trends(matches, puuids_dict, fetcher):
                 if not adv_df.empty:
                     for _, row in adv_df.iterrows():
                         adv_map[row['summonerName']] = {
-                            'harass_score': row['harass_score'],
-                            'greed_index': row['greed_index'],
-                            'jungle_prox': row['jungle_prox'],
-                            'gank_deaths': row['gank_deaths'],
-                            'early_wards': row['early_wards'],
-                            'spotted_deaths': row['spotted_deaths'],
+                            'harass_score':    row['harass_score'],
+                            'greed_index':     row['greed_index'],
+                            'jungle_prox':     row['jungle_prox'],
+                            'gank_deaths':     row['gank_deaths'],
+                            'early_wards':     row['early_wards'],
+                            'spotted_deaths':  row['spotted_deaths'],
                             'unspotted_deaths': row['unspotted_deaths'],
+                            'gold_diff_15':    row.get('gold_diff_15', 0),
+                            'cs_diff_15':      row.get('cs_diff_15', 0),
+                            'xp_diff_15':      row.get('xp_diff_15', 0),
+                            'solo_kills':      row.get('solo_kills', 0),
+                            'multi_deaths':    row.get('multi_deaths', 0),
+                            'dive_deaths':     row.get('dive_deaths', 0),
                         }
 
             # Combine basic + advanced into rows
@@ -183,6 +189,8 @@ def analyze_player_trends(matches, puuids_dict, fetcher):
                     entry.update({
                         'harass_score': 0, 'greed_index': 0, 'jungle_prox': 0,
                         'gank_deaths': 0, 'early_wards': 0, 'spotted_deaths': 0, 'unspotted_deaths': 0,
+                        'gold_diff_15': 0, 'cs_diff_15': 0, 'xp_diff_15': 0,
+                        'solo_kills': 0, 'multi_deaths': 0, 'dive_deaths': 0,
                     })
 
                 all_rows.append(entry)
