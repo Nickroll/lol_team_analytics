@@ -193,11 +193,15 @@ def generate_report_image(stats_df, adv_df, summary_lines, match_id,
             row=timeline_row, col=1,
         )
 
-        fig.add_hline(y=3000, line_dash="dash", line_color="rgba(166, 227, 161, 0.4)",
+        fig.add_shape(type="line", x0=0, x1=1, xref="paper", y0=3000, y1=3000,
+                      line=dict(dash="dash", color="rgba(166, 227, 161, 0.4)"),
                       row=timeline_row, col=1)
-        fig.add_hline(y=-3000, line_dash="dash", line_color="rgba(243, 139, 168, 0.4)",
+        fig.add_shape(type="line", x0=0, x1=1, xref="paper", y0=-3000, y1=-3000,
+                      line=dict(dash="dash", color="rgba(243, 139, 168, 0.4)"),
                       row=timeline_row, col=1)
-        fig.add_hline(y=0, line_color="white", line_width=1, row=timeline_row, col=1)
+        fig.add_shape(type="line", x0=0, x1=1, xref="paper", y0=0, y1=0,
+                      line=dict(color="white", width=1),
+                      row=timeline_row, col=1)
 
         if momentum_data['peak_lead'] > 0:
             fig.add_annotation(
